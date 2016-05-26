@@ -6,99 +6,51 @@ Pero, May 2016
 */
 
 #include "VirtualSerial.h"
+#include "LSM330.h"
 #include <util/delay.h>
 
 /* SPI ports are first 4 bits of PORTB (PB0..3) */
-#define SS 0
+#define SS_A 0
+#define SS_G 4
 #define SCK 1
 #define MOSI 2
 #define MISO 3
 
 static uint16_t room_temp = 0;
 
-/* LUFA CDC Class driver interface configuration and state information.  */
-USB_ClassInfo_CDC_Device_t VirtualSerial_CDC_Interface =
-	{
-		.Config =
-			{
-				.ControlInterfaceNumber   = INTERFACE_ID_CDC_CCI,
-				.DataINEndpoint           =
-					{
-						.Address          = CDC_TX_EPADDR,
-						.Size             = CDC_TXRX_EPSIZE,
-						.Banks            = 1,
-					},
-				.DataOUTEndpoint =
-					{
-						.Address          = CDC_RX_EPADDR,
-						.Size             = CDC_TXRX_EPSIZE,
-						.Banks            = 1,
-					},
-				.NotificationEndpoint =
-					{
-						.Address          = CDC_NOTIFICATION_EPADDR,
-						.Size             = CDC_NOTIFICATION_EPSIZE,
-						.Banks            = 1,
-					},
-			},
-	};
 
 // Standard file stream for the CDC interface 
 static FILE USBSerialStream;
 
-uint16_t read_sensor(void) {
-/* MAX31855 Data Bits (32):
- * 31 : sign,
- * 30 - 18 : thermocouple temperature,
- * 17 : reserved(0),
- * 16 : 1 if fault,
- * 15 - 4 : cold junction temperature,
- * 3 : reserved(0),
- * 2 : 1 if thermocouple is shorted to Vcc,
- * 1 : 1 if thermocouple is shorted to ground,
- * 0 : 1 if thermocouple is open circuit */
-
-    uint8_t sensor[4];  // MAX31855 delivers 32 bits while SPDR is only 8 bits long. That's why we'll read with the uint8_t array
-    uint16_t temp;		// MAX31855 delivers delivers temperature in 14 bits
-    int8_t i;
-    /* SS = 0 */
-    PORTB = (0<<SS);   // Enable Slave
-
-    /* Read the 32 bits from MAX31855 */
-    for(i=0;i<4;i++) {
-        SPDR = 0x00;  //Writing to the register initiates data transmission 
-        /* Wait for transmission to complete. SPIF is cleared by hardware when executing the
-		   corresponding interrupt handling vector. Alternatively, the SPIF bit is cleared by first reading the
-		   SPI Status Register with SPIF set, then accessing the SPI Data Register (SPDR). */
-        while (!(SPSR & (1<<SPIF)));
-        sensor[i] = SPDR;
-    }
-
-    /* Thermocouple temperature */
-    if (sensor[0]&(1<<7)) {
-        /* Negative temperature, clamp it to zero */
-        temp = 0;
-    } else {
-        temp = (((uint16_t)sensor[0])<<6)+(sensor[1]>>2);  // convert 8 bit to 16 bit
-    }
-
-    /* Room temperature */
-    if (sensor[2]&(1<<7)) {
-        /* Negative temperature, clamp it to zero */
-        room_temp = 0;
-    } else {
-        room_temp = (((uint16_t)sensor[2])<<4)+(sensor[3]>>4);
-        room_temp = (room_temp >> 4); // Last four bits of 10bit temp data are 0.5, 0.25, 0.125 and 0.0625 of the celsius. I want only integer number
-    }
-	/* If tehre are any errors with thermocouple  */
-    if (sensor[1]&0x01) {
-        /* Fault */
-        fprintf(&USBSerialStream,"Fault:%u\n",sensor[3]&0b00000111);
-    }
-
-    /* Disable slave */
-    PORTB = (1<<SS);
-    return (temp>>2);  // Last two bits of 14bit temp data are 0.5 and 0.25 of the celsius. I want only integer number
+uint16_t LSM330_ReadRegister(void){
+/* Reading a single register from LSM330. Data is clocked in 16 cycles.
+Bits 15-8: Register content
+Bits  7-2: Register address
+Bit     1: M/_S, increment address in multiple readings/writings.
+Bit     0: R/_W, read/write mode     
+*/
+	
+	uint8_t dataIn;   // data from the SPI device
+	uint8_t i;
+	uint8_t address = CTRL1_REG1_A;	
+	uint8_t mode = 0b10;   // bit 1: read/_write, bit 0: auto increment address in multiple readings/writings
+	uint8_t dataOut = (uint16_t)((mode << 6) | address); //This goes on MOSI
+	fprintf(&USBSerialStream, "Address: %u\n", dataOut);
+	
+	/* SS = 0 */
+	PORTB = (0 << SS_A);   // Enable Slave
+	_delay_ms(10);
+	
+	SPDR = dataOut;			 // Writing to SPDR initiates data transmission
+	while (!(SPSR & (1 << SPIF)));			// Wait till the data is written to SPDR, SPIF will be high
+	
+	for (i = 0; i < 3; i++){
+		dataIn = SPDR;					        //  Read MISO
+		while (!(SPSR & (1 << SPIF)));			// Wait till the data is written to SPDR, SPIF will be high
+		fprintf(&USBSerialStream, "CTRL1 Register: %u\n", dataIn);
+	}
+		/* Disable slave */
+	PORTB = (1 << SS_A);
 }
 
 
@@ -112,14 +64,11 @@ void SetupHardware(void)
 	clock_prescale_set(clock_div_1);	
 	
 	/****** SPI Setup *******/
-
 	/* Enable SPI, Master, set clock rate fck/2 */
 	SPCR = (1<<SPE) | (1<<MSTR);  // Last two bits in SPCR set the SPI clock. When 00 it's f_clk/4.
-	//SPSR = (1<<SPI2X);  // SPI clock is 2 x f_clk/4 = f_clk/2.
-	/* Set !SS and SCK output, all others input */
-	DDRB = (1<<SS)|(1<<SCK);
-	//PORTB &= (1<<SCK);	/* Disable SCK */
-	PORTB |= (1<<SS); /* Set !SS high (slave not enabled) */
+	//SPSR = (1<<SPI2X);  // SPI clock is 2 x f_clk/4 = f_clk/2.	
+	DDRB = (1<<SS_A)|(1<<SS_G)|(1<<SCK);  /* Set !SS and SCK output, all others input */
+	PORTB |= (1<<SS_A)|(1<<SS_G); /* Set !SS high (slave not enabled) */
 
 	/* Hardware Initialization */
 	USB_Init();
@@ -127,7 +76,6 @@ void SetupHardware(void)
 
 int main(void)
 {
-	char* HelloString = "Pero je opet jebac najveci! \n";
 	uint16_t count = 0;
 	SetupHardware();
 
@@ -142,12 +90,14 @@ int main(void)
 		sent about once each 2 seconds. */
 		
 		count++;
-		if(count >=2000)
+		if(count >=1000)
 		{
 			count=0;
-			fprintf(&USBSerialStream, "%s", HelloString);
-			_delay_ms(1);
+			//fprintf(&USBSerialStream, "Pero testira\n");
+			LSM330_ReadRegister();
+			
 		}
+		_delay_ms(1);
 
 
 		//Needed for LUFA

@@ -30,9 +30,9 @@ include $(LUFA_PATH)/Build/lufa_atprogram.mk
 
 program_flip: all
 	$(DFU) -operation erase f memory flash blankcheck loadbuffer $(TARGET).hex program verify
-	echo "Converting EEP file..."
-	mv $(TARGET).eep EE_$(TARGET).hex
-	$(DFU) -operation memory eeprom loadbuffer EE_$(TARGET).hex program verify
+#	echo "Converting EEP file..."
+#	mv $(TARGET).eep EE_$(TARGET).hex
+#	$(DFU) -operation memory eeprom loadbuffer EE_$(TARGET).hex program verify
 	$(DFU) -operation start reset 0
 
 program_avrdude: all   # with avrdude
