@@ -64,6 +64,35 @@
 		/** LED mask for the library LED driver, to indicate that an error has occurred in the USB interface. */
 		#define LEDMASK_USB_ERROR        (LEDS_LED1 | LEDS_LED3)
 
+
+USB_ClassInfo_CDC_Device_t VirtualSerial_CDC_Interface =
+{
+	.Config =
+	{
+		.ControlInterfaceNumber   = INTERFACE_ID_CDC_CCI,
+		.DataINEndpoint           =
+		{
+			.Address          = CDC_TX_EPADDR,
+			.Size             = CDC_TXRX_EPSIZE,
+			.Banks            = 1,
+		},
+		.DataOUTEndpoint =
+		{
+			.Address          = CDC_RX_EPADDR,
+			.Size             = CDC_TXRX_EPSIZE,
+			.Banks            = 1,
+		},
+		.NotificationEndpoint =
+		{
+			.Address          = CDC_NOTIFICATION_EPADDR,
+			.Size             = CDC_NOTIFICATION_EPSIZE,
+			.Banks            = 1,
+		},
+	},
+};
+
+
+
 	/* Function Prototypes: */
 		void SetupHardware(void);
 		void CheckJoystickMovement(void);

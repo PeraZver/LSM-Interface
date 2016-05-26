@@ -16,9 +16,6 @@ Pero, May 2016
 #define MOSI 2
 #define MISO 3
 
-static uint16_t room_temp = 0;
-
-
 // Standard file stream for the CDC interface 
 static FILE USBSerialStream;
 
@@ -39,18 +36,19 @@ Bit     0: R/_W, read/write mode
 	
 	/* SS = 0 */
 	PORTB = (0 << SS_A);   // Enable Slave
-	_delay_ms(10);
 	
 	SPDR = dataOut;			 // Writing to SPDR initiates data transmission
 	while (!(SPSR & (1 << SPIF)));			// Wait till the data is written to SPDR, SPIF will be high
 	
 	for (i = 0; i < 3; i++){
-		dataIn = SPDR;					        //  Read MISO
+		SPDR = 0x00;
 		while (!(SPSR & (1 << SPIF)));			// Wait till the data is written to SPDR, SPIF will be high
+		dataIn = SPDR;					        //  Read MISO
 		fprintf(&USBSerialStream, "CTRL1 Register: %u\n", dataIn);
 	}
 		/* Disable slave */
-	PORTB = (1 << SS_A);
+	PORTB = (1 << SS_A); 
+	return 0;
 }
 
 
