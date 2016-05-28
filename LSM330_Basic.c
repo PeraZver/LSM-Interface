@@ -7,6 +7,7 @@ Pero, May 2016
 
 #include "VirtualSerial.h"
 #include "LSM330.h"
+#include "spi.h"
 #include <util/delay.h>
 
 /* SPI ports are first 4 bits of PORTB (PB0..3) */
@@ -31,23 +32,25 @@ Bit     0: R/_W, read/write mode
 	uint8_t i;
 	uint8_t address = CTRL1_REG1_A;	
 	uint8_t mode = 0b10;   // bit 1: read/_write, bit 0: auto increment address in multiple readings/writings
-	uint8_t dataOut = (uint16_t)((mode << 6) | address); //This goes on MOSI
-	fprintf(&USBSerialStream, "Address: %u\n", dataOut);
+	uint8_t dataOut = ((mode << 6) | address); //This goes on MOSI
+	fprintf(&USBSerialStream, "Address: %x\n", dataOut);
+	fprintf(&USBSerialStream, "PORTB is: %x\n", PORTB);
 	
 	/* SS = 0 */
-	PORTB = (0 << SS_A);   // Enable Slave
+	PORTB &= ~(1 << SS_A);   // Enable Slave
 	
 	SPDR = dataOut;			 // Writing to SPDR initiates data transmission
 	while (!(SPSR & (1 << SPIF)));			// Wait till the data is written to SPDR, SPIF will be high
 	
-	for (i = 0; i < 3; i++){
+	for (i = 0; i < 5; i++){
 		SPDR = 0x00;
 		while (!(SPSR & (1 << SPIF)));			// Wait till the data is written to SPDR, SPIF will be high
 		dataIn = SPDR;					        //  Read MISO
 		fprintf(&USBSerialStream, "CTRL1 Register: %u\n", dataIn);
+		fprintf(&USBSerialStream, "PORTB is: %x\n", PORTB);
 	}
 		/* Disable slave */
-	PORTB = (1 << SS_A); 
+	PORTB |= (1 << SS_A); 
 	return 0;
 }
 
@@ -60,12 +63,22 @@ void SetupHardware(void)
 
 	/* Disable clock division */
 	clock_prescale_set(clock_div_1);	
+
+	// Initialize SPI
+	//spi_init();
 	
 	/****** SPI Setup *******/
 	/* Enable SPI, Master, set clock rate fck/2 */
-	SPCR = (1<<SPE) | (1<<MSTR);  // Last two bits in SPCR set the SPI clock. When 00 it's f_clk/4.
-	//SPSR = (1<<SPI2X);  // SPI clock is 2 x f_clk/4 = f_clk/2.	
-	DDRB = (1<<SS_A)|(1<<SS_G)|(1<<SCK);  /* Set !SS and SCK output, all others input */
+	 SPCR = ((1<<SPE)|               // SPI Enable
+			 (0<<SPIE)|              // SPI Interupt Enable
+			 (0<<DORD)|              // Data Order (0:MSB first / 1:LSB first)
+			 (1<<MSTR)|              // Master/Slave select
+			 (0<<SPR1)|(1<<SPR0)|    // SPI Clock Rate
+			 (1<<CPOL)|              // Clock Polarity (0:SCK low / 1:SCK hi when idle)
+			 (1<<CPHA));             // Clock Phase (0:leading / 1:trailing edge sampling)
+
+	////SPSR = (1<<SPI2X);  // SPI clock is 2 x f_clk/4 = f_clk/2.	
+	DDRB = (1<<SS_A)|(1<<SS_G)|(1<<SCK)|(1<<MOSI);  /* Set !SS, MOSI and SCK output, all others input */
 	PORTB |= (1<<SS_A)|(1<<SS_G); /* Set !SS high (slave not enabled) */
 
 	/* Hardware Initialization */
@@ -74,7 +87,9 @@ void SetupHardware(void)
 
 int main(void)
 {
-	uint16_t count = 0;
+	//uint16_t count = 0;
+	// Allocate buffer array
+	uint8_t data_buf[1];
 	SetupHardware();
 
 	/* Create a regular character stream for the interface so that it can be used with the stdio.h functions */
@@ -84,19 +99,15 @@ int main(void)
 
 	for (;;)
 	{
-		/*The following block of code demonstrates a simple print that is
-		sent about once each 2 seconds. */
-		
-		count++;
-		if(count >=1000)
-		{
-			count=0;
-			//fprintf(&USBSerialStream, "Pero testira\n");
-			LSM330_ReadRegister();
-			
-		}
-		_delay_ms(1);
 
+
+		// Send 0xFF to spi slave and read 1 byte back to the same array
+		data_buf[0] = 0xa0;
+		PORTB &= ~(1 << SS_A);   // Enable Slave
+		spi_transfer_sync(data_buf,data_buf,1);
+		PORTB |= (1 << SS_A);  // Disable Slave
+		fprintf(&USBSerialStream, "REG: %x\n", data_buf[0]);
+		_delay_ms(50);
 
 		//Needed for LUFA
 		CDC_Device_USBTask(&VirtualSerial_CDC_Interface);
